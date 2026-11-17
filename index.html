@@ -57,6 +57,14 @@ details.adv>summary{cursor:pointer;color:var(--muted);font-size:14px}
 .adv input[type=number]{width:84px;font:inherit;background:#11141a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px}
 pre#log{max-height:240px;overflow:auto;font:11px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#0b0d11;border-radius:10px;padding:10px;margin:10px 0 0;white-space:pre-wrap;word-break:break-all;color:#b9c0cc}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:6px 10px}
+select{font:inherit;color:var(--text);background:#11141a;border:1px solid var(--line);border-radius:10px;padding:9px 10px;flex:1;min-width:0;max-width:100%}
+.small{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
+.small input{width:64px;font:inherit;background:#11141a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px}
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:6px;margin-top:12px}
+.chip{padding:9px 0;font-size:13px;border-radius:8px;text-align:center}
+.chip.new{background:transparent;border:1px dashed #4a5160;color:var(--muted)}
+.chip.ready{background:rgba(61,220,151,.16);color:var(--acc)}
+.chip.used{background:#1d2129;color:#4a5160;text-decoration:line-through}
 @media (max-width:380px){.modes{grid-template-columns:1fr}}
 </style>
 </head>
@@ -90,6 +98,21 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px 10px}
       <button class="mode" data-mode="2"><b>Secuencial</b><span>Hasta 26 personajes con el mismo número</span></button>
     </div>
     <p class="hint" id="modeHint">Al conectar se lee el modo real del aparato.</p>
+  </section>
+
+  <section class="card" id="bank">
+    <h2>Banco de números fijos</h2>
+    <p class="hint" style="margin-top:0">Para amiibos como el Link de Smash, que con números nuevos solo dan Epona. Cada copia tiene su número fijo: la primera vez da Epona (no hace falta registrarla) y desde el día siguiente da un cofre al día.</p>
+    <div id="bankBody" hidden>
+      <div class="row" style="margin-top:12px">
+        <select id="bankSel"></select>
+        <label class="small">Copias <input type="number" id="bankN" min="1" max="50" step="1"></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="primary" id="bankNext">Cargar siguiente</button></div>
+      <div class="chips" id="bankChips"></div>
+      <p class="hint" id="bankTip" hidden style="color:var(--acc)"></p>
+    </div>
+    <p class="hint" id="bankInfo"></p>
   </section>
 
   <section class="card">
@@ -205,6 +228,105 @@ function buildUpload(src) {
   out.push(H('BCBC'), H('CCDD'));
   return out;
 }
+
+/* ---------- cifrado de amiibos (port de amiitool, verificado byte a byte) ---------- */
+const AMIIBO = (() => {
+  const S = () => globalThis.crypto.subtle;
+  const cat = (...p) => { const o = new Uint8Array(p.reduce((a, x) => a + x.length, 0)); let i = 0; for (const x of p) { o.set(x, i); i += x.length; } return o; };
+  const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  async function hmac(key, ...parts) {
+    const k = await S().importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return new Uint8Array(await S().sign('HMAC', k, cat(...parts)));
+  }
+  const master = b => ({ hmacKey: b.slice(0, 16), typeString: b.slice(16, 30), magicSize: b[31], magic: b.slice(32, 48), xorPad: b.slice(48, 80) });
+  function parseKeys(buf) {
+    if (!buf || buf.length !== 160) throw new Error('la key_retail.bin debe medir 160 bytes');
+    const k = { data: master(buf.slice(0, 80)), tag: master(buf.slice(80, 160)) };
+    if (k.data.magicSize > 16 || k.tag.magicSize > 16) throw new Error('key_retail.bin no válida');
+    return k;
+  }
+  function prepareSeed(m, seed) {
+    const out = [];
+    for (let i = 0; i < 14; i++) { out.push(m.typeString[i]); if (m.typeString[i] === 0) break; }
+    for (let j = 0; j < 16 - m.magicSize; j++) out.push(seed[j]);
+    for (let j = 0; j < m.magicSize; j++) out.push(m.magic[j]);
+    for (let j = 0; j < 16; j++) out.push(seed[0x10 + j]);
+    for (let j = 0; j < 32; j++) out.push(seed[0x20 + j] ^ m.xorPad[j]);
+    return Uint8Array.from(out);
+  }
+  async function drbg(key, seed, n) {
+    const out = new Uint8Array(n), buf = new Uint8Array(2 + seed.length);
+    buf.set(seed, 2);
+    for (let it = 0, o = 0; o < n; it++, o += 32) {
+      buf[0] = it >> 8; buf[1] = it & 255;
+      const h = await hmac(key, buf);
+      out.set(h.slice(0, Math.min(32, n - o)), o);
+    }
+    return out;
+  }
+  function calcSeed(d) {
+    const s = new Uint8Array(64);
+    s.set(d.slice(0x29, 0x2B), 0x00);
+    s.set(d.slice(0x1D4, 0x1DC), 0x10);
+    s.set(d.slice(0x1D4, 0x1DC), 0x18);
+    s.set(d.slice(0x1E8, 0x208), 0x20);
+    return s;
+  }
+  async function keygen(m, d) {
+    const b = await drbg(m.hmacKey, prepareSeed(m, calcSeed(d)), 48);
+    return { aesKey: b.slice(0, 16), aesIV: b.slice(16, 32), hmacKey: b.slice(32, 48) };
+  }
+  async function cipher(k, input) {
+    const out = new Uint8Array(520);
+    const key = await S().importKey('raw', k.aesKey, 'AES-CTR', false, ['encrypt']);
+    out.set(new Uint8Array(await S().encrypt({ name: 'AES-CTR', counter: k.aesIV, length: 128 }, key, input.slice(0x2C, 0x2C + 0x188))), 0x2C);
+    out.set(input.slice(0x000, 0x008), 0x000);
+    out.set(input.slice(0x028, 0x02C), 0x028);
+    out.set(input.slice(0x1D4, 0x208), 0x1D4);
+    return out;
+  }
+  const MAP = [[0x000, 0x008, 0x008], [0x008, 0x080, 0x020], [0x028, 0x010, 0x024], [0x04C, 0x0A0, 0x168], [0x1B4, 0x034, 0x020], [0x1D4, 0x000, 0x008], [0x1DC, 0x054, 0x02C]];
+  const toInternal = t => { const i = new Uint8Array(520); for (const [a, b, l] of MAP) i.set(t.slice(b, b + l), a); return i; };
+  const toTag = i => { const t = new Uint8Array(520); for (const [a, b, l] of MAP) t.set(i.slice(a, a + l), b); return t; };
+  async function unpack(keys, tag) {
+    const intl = toInternal(tag.slice(0, 520));
+    const dk = await keygen(keys.data, intl), tk = await keygen(keys.tag, intl);
+    const plain = await cipher(dk, intl);
+    plain.set(await hmac(tk.hmacKey, plain.slice(0x1D4, 0x208)), 0x1B4);
+    plain.set(await hmac(dk.hmacKey, plain.slice(0x029, 0x208)), 0x008);
+    const ok = eq(plain.slice(0x008, 0x028), intl.slice(0x008, 0x028)) && eq(plain.slice(0x1B4, 0x1D4), intl.slice(0x1B4, 0x1D4));
+    return { plain, ok };
+  }
+  async function pack(keys, plain) {
+    const tk = await keygen(keys.tag, plain), dk = await keygen(keys.data, plain);
+    const tagH = await hmac(tk.hmacKey, plain.slice(0x1D4, 0x208));
+    const dataH = await hmac(dk.hmacKey, plain.slice(0x029, 0x1B4), tagH, plain.slice(0x1D4, 0x208));
+    const c = await cipher(dk, plain);
+    c.set(tagH, 0x1B4);
+    c.set(dataH, 0x008);
+    return toTag(c);
+  }
+  function setUid(plain, u) {
+    plain.set([u[0], u[1], u[2], 0x88 ^ u[0] ^ u[1] ^ u[2], u[3], u[4], u[5], u[6]], 0x1D4);
+    plain[0x000] = u[3] ^ u[4] ^ u[5] ^ u[6];
+  }
+  async function withUid(keys, tag, uid) {
+    const { plain, ok } = await unpack(keys, tag);
+    if (!ok) throw new Error('las firmas del archivo no cuadran con esta key_retail.bin');
+    setUid(plain, uid);
+    const out = new Uint8Array(540);
+    out.set(tag.slice(0, 540));
+    out.set(await pack(keys, plain), 0);
+    return out;
+  }
+  async function bankUid(idHex, index) {
+    const h = new Uint8Array(await S().digest('SHA-256', new TextEncoder().encode('amiibolink-banco|' + idHex + '|' + index)));
+    const u = [0x04, h[0], h[1], h[2], h[3], h[4], h[5]];
+    if (u[3] === 0x88) u[3] = 0x89;
+    return Uint8Array.from(u);
+  }
+  return { parseKeys, unpack, pack, withUid, bankUid, toInternal };
+})();
 
 /* ---------- ajustes ---------- */
 const S = Object.assign({ ack: true, delay: 250, split: false }, store.get('al-settings', {}));
@@ -401,7 +523,16 @@ async function sendAmiibo(it, row) {
     return true;
   });
   setTimeout(() => { bar.classList.remove('show'); fill.style.width = '0'; }, 600);
-  if (ok) {
+  if (ok && it.bank) {
+    toast(it.name + ' cargado');
+    markCopy(it.bank.id, it.bank.i);
+    const tip = $('#bankTip');
+    tip.textContent = it.name + ' cargado. ' + (it.bank.st === 'new'
+      ? 'Es nueva: este escaneo dará Epona y desde mañana dará cofre.'
+      : 'El juego ya la conoce: escanea y te dará cofre.') + ' No pulses el botón del AmiiboLink antes de escanear.';
+    tip.hidden = false;
+    renderBank();
+  } else if (ok) {
     toast(it.name + ' cargado');
     const tip = $('#afterLoad');
     tip.textContent = it.name + ' cargado. ' + (MODE_TIPS[devMode] || '');
@@ -411,6 +542,99 @@ async function sendAmiibo(it, row) {
     if (row) row.classList.add('ok');
     renderList();
   }
+  return !!ok;
+}
+
+/* ---------- banco de números fijos ---------- */
+const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+let KEYS = null;
+function loadKeys() {
+  const h = store.get('al-keys', null);
+  try { KEYS = h ? AMIIBO.parseKeys(H(h)) : null; } catch (e) { KEYS = null; }
+}
+function saveKeys(u8) {
+  try { KEYS = AMIIBO.parseKeys(u8); } catch (e) { log('Keys: ' + e.message); return false; }
+  store.set('al-keys', hex(u8));
+  log('key_retail.bin guardada en este navegador');
+  renderBank();
+  return true;
+}
+function collectKeys(files) { // [{ name, data }]
+  const full = files.find(f => /key_retail\.bin$/i.test(f.name) && f.data.length === 160);
+  if (full) return saveKeys(full.data);
+  const uf = files.find(f => /unfixed-info\.bin$/i.test(f.name) && f.data.length === 80);
+  const ls = files.find(f => /locked-secret\.bin$/i.test(f.name) && f.data.length === 80);
+  if (uf && ls) { const k = new Uint8Array(160); k.set(uf.data); k.set(ls.data, 80); return saveKeys(k); }
+  return false;
+}
+const bankState = () => store.get('al-bank', {});
+function copyStatus(id, i) {
+  const s = (bankState()[id] || {})[i];
+  if (!s) return 'new';
+  return s.last === today() ? 'used' : 'ready';
+}
+function markCopy(id, i) {
+  const b = bankState(), t = today();
+  b[id] = b[id] || {};
+  const s = b[id][i] || { first: t };
+  s.last = t;
+  b[id][i] = s;
+  store.set('al-bank', b);
+}
+function bankCandidates() {
+  return LIB.filter(it => it.id && /link|zelda|sheik|ganon/i.test(it.name) && /zelda|smash/i.test(it.group));
+}
+function currentBankItem() {
+  const c = bankCandidates();
+  const saved = store.get('al-bank-sel', null);
+  return c.find(it => it.path === saved) || c.find(it => /smash/i.test(it.group) && /^link$/i.test(it.name)) || c[0] || null;
+}
+function bankSize() { return Math.max(1, Math.min(50, Number(store.get('al-bank-n', 20)) || 20)); }
+function renderBank() {
+  const body = $('#bankBody'), info = $('#bankInfo');
+  const cands = bankCandidates();
+  if (!cands.length) { body.hidden = true; info.textContent = 'Importa primero tu biblioteca.'; return; }
+  if (!KEYS) { body.hidden = true; info.innerHTML = 'Para crear las copias necesito tu <b>key_retail.bin</b>. Vuelve a pulsar «Importar .zip» con el mismo zip (la coge sola) o añádela con «Añadir .bin».'; return; }
+  body.hidden = false;
+  const cur = currentBankItem();
+  const sel = $('#bankSel');
+  if (sel.options.length !== cands.length) {
+    sel.textContent = '';
+    cands.forEach(it => { const o = el('option', null, it.name + ' · ' + [it.group, it.sub].filter(Boolean).join(' · ')); o.value = it.path; sel.append(o); });
+  }
+  sel.value = cur.path;
+  $('#bankN').value = bankSize();
+  const chips = $('#bankChips');
+  chips.textContent = '';
+  const c = { new: 0, ready: 0, used: 0 };
+  for (let i = 1; i <= bankSize(); i++) {
+    const st = copyStatus(cur.id, i);
+    c[st]++;
+    const b = el('button', 'chip ' + st, String(i));
+    b.title = { new: 'Nueva: dará Epona', ready: 'Lista: dará cofre', used: 'Usada hoy' }[st];
+    b.addEventListener('click', () => sendBankCopy(i));
+    chips.append(b);
+  }
+  info.textContent = 'Hoy: ' + c.ready + ' listas para cofre (verde) · ' + c.new + ' nuevas que darán Epona (borde) · ' + c.used + ' usadas hoy (gris).';
+}
+async function sendBankCopy(i) {
+  const it = currentBankItem();
+  if (!it || !KEYS) return;
+  if (devMode === 2) { toast('En Secuencial el banco no funciona: cambia a Manual', true); return; }
+  let data;
+  try { data = await AMIIBO.withUid(KEYS, it.data, await AMIIBO.bankUid(it.id, i)); }
+  catch (e) { log('Banco: ' + e.message); toast('No he podido preparar la copia: ' + e.message, true); return; }
+  await sendAmiibo({ name: it.name + ' #' + i, path: it.path + '#' + i, data, bank: { id: it.id, i, st: copyStatus(it.id, i) } }, null);
+}
+function bankNext() {
+  const it = currentBankItem();
+  if (!it) return;
+  const n = bankSize();
+  let pick = 0;
+  for (let i = 1; i <= n && !pick; i++) if (copyStatus(it.id, i) === 'ready') pick = i;
+  for (let i = 1; i <= n && !pick; i++) if (copyStatus(it.id, i) === 'new') pick = i;
+  if (!pick) { toast('Todas las copias están usadas hoy. Mañana más, o sube el número de copias.'); return; }
+  sendBankCopy(pick);
 }
 
 /* ---------- biblioteca (IndexedDB) ---------- */
@@ -495,6 +719,7 @@ async function addItems(items) {
   try { await idbPut(items); }
   catch (e) { log('No se pudo guardar en el navegador: ' + e.message); toast('Importado, pero no se ha podido guardar para la próxima vez'); }
   renderList();
+  renderBank();
   toast(items.length + ' amiibos importados');
 }
 
@@ -525,14 +750,16 @@ async function importZip(file) {
     await loadJSZip();
     const zip = await window.JSZip.loadAsync(file, { decodeFileName: decodeZipName });
     const entries = Object.values(zip.files).filter(f => !f.dir && /\.bin$/i.test(f.name) && !/(^|\/)__MACOSX\//.test(f.name));
-    const items = [];
+    const items = [], keyFiles = [];
     for (let i = 0; i < entries.length; i++) {
       const u8 = await entries[i].async('uint8array');
       if (validBin(u8)) items.push(makeItem(entries[i].name, u8));
+      else if (u8.length === 80 || u8.length === 160) keyFiles.push({ name: entries[i].name, data: u8 });
       if (i % 25 === 0) progress(i / entries.length);
     }
     progress(1);
     log('ZIP: ' + entries.length + ' .bin leídos, ' + items.length + ' válidos');
+    collectKeys(keyFiles);
     await addItems(items);
   } catch (e) {
     log('Error con el zip: ' + e.message);
@@ -541,13 +768,16 @@ async function importZip(file) {
 }
 async function importFiles(fileList) {
   const files = Array.from(fileList).filter(f => /\.bin$/i.test(f.name));
-  const items = [];
+  const items = [], keyFiles = [];
   for (let i = 0; i < files.length; i++) {
     const u8 = new Uint8Array(await files[i].arrayBuffer());
     if (validBin(u8)) items.push(makeItem(files[i].webkitRelativePath || files[i].name, u8));
+    else if (u8.length === 80 || u8.length === 160) keyFiles.push({ name: files[i].name, data: u8 });
     if (i % 25 === 0) progress(i / Math.max(files.length, 1));
   }
   progress(1);
+  const gotKeys = collectKeys(keyFiles);
+  if (!items.length && gotKeys) { toast('key_retail.bin guardada'); return; }
   await addItems(items);
 }
 
@@ -667,14 +897,19 @@ function init() {
     LIB = [];
     store.set('al-recent', []);
     renderList();
+    renderBank();
     toast('Biblioteca borrada');
   });
 
   paintMode();
   refreshConnUI();
+  loadKeys();
+  $('#bankSel').addEventListener('change', e => { store.set('al-bank-sel', e.target.value); $('#bankTip').hidden = true; renderBank(); });
+  $('#bankN').addEventListener('change', e => { store.set('al-bank-n', Math.max(1, Math.min(50, Number(e.target.value) || 20))); renderBank(); });
+  $('#bankNext').addEventListener('click', bankNext);
   idbAll()
-    .then(rows => { mergeItems(rows.map(r => makeItem(r.path, r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)))); renderList(); })
-    .catch(e => { log('Sin almacenamiento local: ' + e.message); renderList(); });
+    .then(rows => { mergeItems(rows.map(r => makeItem(r.path, r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)))); renderList(); renderBank(); })
+    .catch(e => { log('Sin almacenamiento local: ' + e.message); renderList(); renderBank(); });
 }
 init();
 </script>
