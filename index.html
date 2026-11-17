@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>AmiiboLink sin anuncios</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#262a33;--text:#e9ecf1;--muted:#8b93a3;--acc:#3ddc97;--acc-ink:#05140d;--warn:#f5b84b;--err:#ff6b6b}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+body{padding:calc(env(safe-area-inset-top) + 12px) 14px calc(env(safe-area-inset-bottom) + 28px)}
+main{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 2px}
+h1{font-size:20px;margin:0;letter-spacing:-.01em}
+.pill{font-size:12px;padding:4px 10px;border-radius:999px;background:#262a33;color:var(--muted);white-space:nowrap;max-width:60%;overflow:hidden;text-overflow:ellipsis}
+.pill.on{background:rgba(61,220,151,.15);color:var(--acc)}
+.pill.busy{background:rgba(245,184,75,.15);color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.card.alert{border-color:rgba(255,107,107,.4)}
+button{font:inherit;color:inherit;border:0;border-radius:10px;padding:10px 14px;background:#262a33;cursor:pointer;-webkit-tap-highlight-color:transparent}
+button.primary{background:var(--acc);color:var(--acc-ink);font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hint{color:var(--muted);font-size:13px;margin:10px 0 0}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mode{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:3px;padding:10px;border:1px solid var(--line);background:#1d2129}
+.mode b{font-size:14px}
+.mode span{font-size:12px;color:var(--muted);line-height:1.3}
+.mode.sel{border-color:var(--acc);background:rgba(61,220,151,.08)}
+input[type=search]{width:100%;font:inherit;color:var(--text);background:#11141a;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:12px;-webkit-appearance:none}
+.sect{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:14px 0 2px}
+details.group{border-top:1px solid var(--line)}
+details.group>summary{list-style:none;padding:12px 2px;display:flex;justify-content:space-between;gap:10px;cursor:pointer;font-weight:600}
+details.group>summary::-webkit-details-marker{display:none}
+details.group[open]>summary{color:var(--acc)}
+.count{color:var(--muted);font-weight:400;font-size:13px}
+.item{display:flex;align-items:center;gap:10px;padding:7px 2px}
+.item img,.item .ph{width:40px;height:40px;flex:none;border-radius:8px}
+.item img{object-fit:contain}
+.item .ph{background:#1d2129}
+.item .meta{flex:1;min-width:0}
+.item .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item button{padding:8px 12px;font-size:14px;flex:none}
+.item.ok button{background:rgba(61,220,151,.15);color:var(--acc)}
+.bar{height:4px;background:#262a33;border-radius:4px;overflow:hidden;margin-top:12px;display:none}
+.bar.show{display:block}
+.bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .15s}
+.empty{color:var(--muted);font-size:14px;padding:8px 0 0}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 18px);transform:translateX(-50%);background:#2b303b;padding:10px 14px;border-radius:10px;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+#toast.show{opacity:1}
+#toast.err{background:#4a2326}
+details.adv>summary{cursor:pointer;color:var(--muted);font-size:14px}
+.adv label{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:14px}
+.adv input[type=number]{width:84px;font:inherit;background:#11141a;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px}
+pre#log{max-height:240px;overflow:auto;font:11px/1.4 ui-monospace,Menlo,Consolas,monospace;background:#0b0d11;border-radius:10px;padding:10px;margin:10px 0 0;white-space:pre-wrap;word-break:break-all;color:#b9c0cc}
+footer{color:var(--muted);font-size:12px;text-align:center;padding:6px 10px}
+@media (max-width:380px){.modes{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>AmiiboLink</h1>
+    <span id="status" class="pill">Desconectado</span>
+  </header>
+
+  <section class="card alert" id="noBt" hidden>
+    <h2>Sin Bluetooth web</h2>
+    <div>Este navegador no puede hablar con el AmiiboLink. En iPhone abre esta misma dirección en la app <b>Bluefy</b> (gratis). En ordenador usa Chrome o Edge.</div>
+  </section>
+
+  <section class="card">
+    <h2>Conexión</h2>
+    <div class="row">
+      <button class="primary" id="btnConnect">Conectar</button>
+      <button id="btnDisconnect" hidden>Desconectar</button>
+      <button id="btnAll">No aparece: buscar todos</button>
+    </div>
+    <p class="hint" id="devInfo">Pulsa el botón del AmiiboLink para despertarlo antes de conectar.</p>
+  </section>
+
+  <section class="card">
+    <h2>Modo</h2>
+    <div class="modes">
+      <button class="mode" data-mode="2"><b>Automático</b><span>Número de serie nuevo en cada escaneo</span></button>
+      <button class="mode" data-mode="0"><b>Manual</b><span>Número nuevo al pulsar el botón</span></button>
+      <button class="mode" data-mode="1"><b>Secuencial</b><span>Hasta 26 personajes con el mismo número</span></button>
+    </div>
+    <p class="hint">Para saltarte el límite diario de Zelda usa <b>Automático</b>. El aparato no dice en qué modo está, así que aquí se marca el último que enviaste desde esta página.</p>
+  </section>
+
+  <section class="card">
+    <h2>Biblioteca</h2>
+    <div class="row">
+      <button id="btnZip">Importar .zip</button>
+      <button id="btnFiles">Añadir .bin</button>
+      <button id="btnDir" hidden>Importar carpeta</button>
+    </div>
+    <input type="file" id="inZip" accept=".zip,application/zip" hidden>
+    <input type="file" id="inFiles" multiple hidden>
+    <input type="file" id="inDir" webkitdirectory multiple hidden>
+    <div class="bar" id="bar"><i></i></div>
+    <p class="hint" id="libInfo"></p>
+    <p class="hint" id="iconHint" hidden style="color:var(--warn)">Las fotos no cargan aquí. Pasa si abres la página dentro de Claude (su vista previa bloquea las imágenes de internet y también el Bluetooth) o sin conexión. Ábrela en Chrome o Edge, o en Bluefy en el iPhone.</p>
+    <input type="search" id="q" placeholder="Buscar amiibo…" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div id="list"></div>
+  </section>
+
+  <section class="card">
+    <details class="adv" id="adv">
+      <summary>Avanzado y registro técnico</summary>
+      <label>Esperar confirmación del aparato <input type="checkbox" id="optAck"></label>
+      <label>Pausa entre comandos (ms) <input type="number" id="optDelay" min="0" max="2000" step="10"></label>
+      <label>Trocear en paquetes de 20 bytes <input type="checkbox" id="optSplit"></label>
+      <div class="row" style="margin-top:6px">
+        <button id="btnCopyLog">Copiar registro</button>
+        <button id="btnClearLib">Borrar biblioteca</button>
+      </div>
+      <pre id="log"></pre>
+    </details>
+  </section>
+
+  <footer>Protocolo sacado de TagMo (código abierto, GPL-3.0). Sin anuncios, sin cuentas: tus archivos se quedan en este navegador.</footer>
+</main>
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ---------- utilidades ---------- */
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const hex = u8 => Array.from(u8, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+const H = s => Uint8Array.from(s.replace(/\s+/g, '').match(/../g).map(x => parseInt(x, 16)));
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+};
+
+/* ---------- protocolo AmiiboLink (TagMo, GattService.kt) ---------- */
+const SERVICES = [
+  { svc: '6e400001-b5a3-f393-e0a9-e50e24dcca9e', tx: '6e400002-b5a3-f393-e0a9-e50e24dcca9e', rx: '6e400003-b5a3-f393-e0a9-e50e24dcca9e' },
+  { svc: '78290001-d52e-473f-a9f4-f03da7c67dd1', tx: '78290002-d52e-473f-a9f4-f03da7c67dd1', rx: '78290003-d52e-473f-a9f4-f03da7c67dd1' },
+  { svc: '0000ff10-0000-1000-8000-00805f9b34fb', tx: '0000ff11-0000-1000-8000-00805f9b34fb', rx: '0000ff12-0000-1000-8000-00805f9b34fb' }
+];
+const NAME_PREFIXES = ['amiibolink', 'Amiibolink', 'AmiiboLink', 'AMIIBOLINK', 'amiibo link', 'Amiibo Link', 'Amiibo link'];
+const CMD = {
+  hello: H('00001002335334AB1FE8C26DE535274B52E01F26'),
+  mode: {
+    0: H('00001003341F98E846198575E3D3E0425D418942'), // manual
+    1: H('000010032F25D80C4942C0D50B0BC6DFCA6021FC'), // secuencial
+    2: H('00001003E39651EC07E7E55437B6138E80C9B309')  // automático
+  }
+};
+const RESP_DONE = '000010029C4D9FC65E4AA40A1DA07BCAD5661703';
+const MODE_NAMES = { 0: 'Manual', 1: 'Secuencial', 2: 'Automático' };
+
+function buildUpload(src) {
+  const d = new Uint8Array(540);
+  d.set(src.subarray(0, 540));
+  const out = [H('A0B0'), H('ACAC00040000021C'), H('ABAB021C')];
+  for (let i = 0, idx = 0; i < 540; i += 150, idx++) {
+    const part = d.subarray(i, Math.min(i + 150, 540));
+    const c = new Uint8Array(4 + part.length + 2);
+    c.set([0xDD, 0xAA, 0x00, part.length]);
+    c.set(part, 4);
+    c[4 + part.length] = 0x00;
+    c[5 + part.length] = idx;
+    out.push(c);
+  }
+  out.push(H('BCBC'), H('CCDD'));
+  return out;
+}
+
+/* ---------- ajustes ---------- */
+const S = Object.assign({ ack: true, delay: 250, split: false }, store.get('al-settings', {}));
+let splitAuto = false;
+function saveSettings() { store.set('al-settings', S); }
+
+/* ---------- registro y avisos ---------- */
+const logLines = [];
+function log(msg) {
+  const t = new Date().toLocaleTimeString('es-ES');
+  logLines.push(t + '  ' + msg);
+  if (logLines.length > 400) logLines.shift();
+  const pre = $('#log');
+  pre.textContent = logLines.join('\n');
+  pre.scrollTop = pre.scrollHeight;
+}
+let toastTimer = null;
+function toast(msg, err) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 2800);
+}
+
+/* ---------- Bluetooth ---------- */
+let device = null, txC = null, rxC = null, pending = null, busy = false;
+
+function setStatus(text, cls) {
+  const s = $('#status');
+  s.textContent = text;
+  s.className = 'pill' + (cls ? ' ' + cls : '');
+}
+function connected() { return !!(device && device.gatt && device.gatt.connected && txC); }
+function refreshConnUI() {
+  const on = connected();
+  $('#btnConnect').hidden = on;
+  $('#btnAll').hidden = on;
+  $('#btnDisconnect').hidden = !on;
+  if (!busy) setStatus(on ? 'Conectado' : 'Desconectado', on ? 'on' : '');
+}
+
+function onNotify(e) {
+  const v = e.target.value;
+  const u8 = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
+  log('RX ' + hex(u8));
+  if (pending) { const p = pending; pending = null; p(u8); }
+}
+
+async function rawWrite(b) {
+  const p = txC.properties || {};
+  if (p.writeWithoutResponse && txC.writeValueWithoutResponse) return txC.writeValueWithoutResponse(b);
+  if (p.write && txC.writeValueWithResponse) return txC.writeValueWithResponse(b);
+  return txC.writeValue(b);
+}
+async function write(bytes) {
+  if (!S.split && !splitAuto) {
+    try { await rawWrite(bytes); return; }
+    catch (e) {
+      if (bytes.length <= 20) throw e;
+      log('Escritura de ' + bytes.length + ' bytes rechazada (' + e.message + '). Paso a paquetes de 20.');
+      splitAuto = true;
+    }
+  }
+  for (let i = 0; i < bytes.length; i += 20) {
+    await rawWrite(bytes.slice(i, i + 20));
+    if (i + 20 < bytes.length) await sleep(S.delay);
+  }
+}
+async function cmd(bytes, timeout = 2500) {
+  let wait = null;
+  if (S.ack) {
+    wait = new Promise(res => {
+      const fn = v => { clearTimeout(t); res(v); };
+      const t = setTimeout(() => { if (pending === fn) pending = null; res(null); }, timeout);
+      pending = fn;
+    });
+  }
+  log('TX ' + hex(bytes));
+  await write(bytes);
+  const r = wait ? await wait : null;
+  if (S.ack && !r) log('   (sin respuesta, sigo)');
+  await sleep(S.delay);
+  return r;
+}
+
+async function connect(all) {
+  if (!navigator.bluetooth) { toast('Este navegador no tiene Bluetooth web', true); return; }
+  const optionalServices = SERVICES.map(s => s.svc);
+  const opts = all
+    ? { acceptAllDevices: true, optionalServices }
+    : { filters: NAME_PREFIXES.map(n => ({ namePrefix: n })).concat([{ services: [SERVICES[0].svc] }]), optionalServices };
+  let dev;
+  try { dev = await navigator.bluetooth.requestDevice(opts); }
+  catch (e) { if (e && e.name !== 'NotFoundError') { log('Selección: ' + e.message); toast(e.message, true); } return; }
+  device = dev;
+  device.addEventListener('gattserverdisconnected', onDisconnected);
+  setStatus('Conectando…', 'busy');
+  try {
+    const server = await device.gatt.connect();
+    let found = null;
+    for (const s of SERVICES) {
+      try { found = { svc: await server.getPrimaryService(s.svc), s }; break; } catch (e) {}
+    }
+    if (!found) throw new Error('No encuentro el servicio del AmiiboLink');
+    txC = rxC = null;
+    try { txC = await found.svc.getCharacteristic(found.s.tx); } catch (e) {}
+    try { rxC = await found.svc.getCharacteristic(found.s.rx); } catch (e) {}
+    if (!txC || !rxC) {
+      const chars = await found.svc.getCharacteristics();
+      txC = txC || chars.find(c => c.properties.writeWithoutResponse || c.properties.write);
+      rxC = rxC || chars.find(c => c.properties.notify);
+    }
+    if (!txC || !rxC) throw new Error('Faltan características de escritura o notificación');
+    rxC.addEventListener('characteristicvaluechanged', onNotify);
+    await rxC.startNotifications();
+    log('Conectado a ' + (device.name || 'dispositivo sin nombre') + ' (servicio ' + found.s.svc.slice(0, 8) + ')');
+    refreshConnUI();
+    const r = await cmd(CMD.hello, 3000);
+    let info = device.name || 'AmiiboLink';
+    if (r && hex(r).startsWith('00002013')) {
+      const fw = r.slice(4);
+      const ascii = Array.from(fw).every(b => b >= 32 && b < 127) ? String.fromCharCode(...fw) : hex(fw);
+      info += ' · firmware ' + ascii;
+    }
+    $('#devInfo').textContent = info;
+    toast('Conectado');
+  } catch (e) {
+    log('Error al conectar: ' + e.message);
+    toast('No he podido conectar: ' + e.message, true);
+    try { device.gatt.disconnect(); } catch (_) {}
+    txC = rxC = null;
+    refreshConnUI();
+  }
+}
+function onDisconnected() {
+  txC = rxC = null;
+  pending = null;
+  log('Desconectado');
+  $('#devInfo').textContent = 'Desconectado. Pulsa el botón del AmiiboLink y vuelve a conectar.';
+  refreshConnUI();
+}
+function disconnect() { try { device && device.gatt.disconnect(); } catch (e) {} }
+
+async function guarded(label, fn) {
+  if (!connected()) { toast('Primero conecta el AmiiboLink', true); return false; }
+  if (busy) { toast('Espera, estoy enviando otra cosa'); return false; }
+  busy = true;
+  setStatus(label, 'busy');
+  try { return await fn(); }
+  catch (e) { log('Error: ' + e.message); toast('Ha fallado: ' + e.message, true); return false; }
+  finally { busy = false; refreshConnUI(); }
+}
+
+async function setMode(m) {
+  const ok = await guarded('Cambiando modo…', async () => {
+    await cmd(CMD.mode[m]);
+    return true;
+  });
+  if (ok) {
+    store.set('al-mode', m);
+    paintMode();
+    toast('Modo ' + MODE_NAMES[m] + ' enviado');
+  }
+}
+function paintMode() {
+  const m = store.get('al-mode', null);
+  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('sel', String(m) === b.dataset.mode));
+}
+
+async function sendAmiibo(it, row) {
+  const bar = $('#bar'), fill = bar.firstElementChild;
+  const ok = await guarded('Cargando…', async () => {
+    const cmds = buildUpload(it.data);
+    let done = false;
+    bar.classList.add('show');
+    for (let i = 0; i < cmds.length; i++) {
+      const r = await cmd(cmds[i]);
+      if (r && hex(r) === RESP_DONE) done = true;
+      fill.style.width = Math.round((i + 1) / cmds.length * 100) + '%';
+    }
+    log(it.name + (done ? ': confirmado por el aparato' : ': enviado (sin confirmación explícita)'));
+    return true;
+  });
+  setTimeout(() => { bar.classList.remove('show'); fill.style.width = '0'; }, 600);
+  if (ok) {
+    toast(it.name + ' cargado');
+    pushRecent(it.path);
+    document.querySelectorAll('.item.ok').forEach(x => x.classList.remove('ok'));
+    if (row) row.classList.add('ok');
+    renderList();
+  }
+}
+
+/* ---------- biblioteca (IndexedDB) ---------- */
+const DB_NAME = 'amiibolink-lib', DB_STORE = 'bins';
+let LIB = [];
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(DB_STORE, { keyPath: 'path' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbAll() {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const q = db.transaction(DB_STORE).objectStore(DB_STORE).getAll();
+    q.onsuccess = () => res(q.result || []);
+    q.onerror = () => rej(q.error);
+  });
+}
+async function idbPut(items) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    const os = tx.objectStore(DB_STORE);
+    items.forEach(it => os.put({ path: it.path, data: it.data }));
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbClear() {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).clear();
+    tx.oncomplete = res;
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+function validBin(u8) { return u8.length >= 532 && u8.length <= 580; }
+function cleanGroup(s) { return s.replace(/\s*amiibo$/i, '').trim() || s; }
+function cleanName(s) {
+  return s.replace(/\.bin$/i, '').replace(/_s\b/g, '’s').replace(/ _ /g, ' / ').replace(/_/g, ' ').trim();
+}
+function makeItem(path, data) {
+  path = path.replace(/\\/g, '/');
+  const parts = path.split('/').filter(Boolean);
+  const file = parts.pop() || path;
+  let dirs = parts;
+  const k = dirs.findIndex(d => /^amiibo bin$/i.test(d));
+  if (k >= 0) dirs = dirs.slice(k + 1);
+  const id = data.length >= 92 ? hex(data.subarray(84, 92)).toLowerCase() : '';
+  return {
+    path, data,
+    name: cleanName(file),
+    group: dirs.length ? cleanGroup(dirs[0]) : 'Sin carpeta',
+    sub: dirs.slice(1).join(' · '),
+    id
+  };
+}
+function iconUrl(id) {
+  return 'https://raw.githubusercontent.com/N3evin/AmiiboAPI/master/images/icon_' + id.slice(0, 8) + '-' + id.slice(8, 16) + '.png';
+}
+let iconLoaded = false, iconWarned = false;
+function iconFail() {
+  if (iconLoaded || iconWarned) return;
+  iconWarned = true;
+  log('No cargan las fotos de AmiiboAPI (raw.githubusercontent.com)');
+  $('#iconHint').hidden = false;
+}
+function mergeItems(items) {
+  const map = new Map(LIB.map(it => [it.path, it]));
+  items.forEach(it => map.set(it.path, it));
+  LIB = Array.from(map.values()).sort((a, b) =>
+    a.group.localeCompare(b.group, 'es') || a.sub.localeCompare(b.sub, 'es') || a.name.localeCompare(b.name, 'es'));
+}
+async function addItems(items) {
+  if (!items.length) { toast('No he encontrado ningún .bin de amiibo válido', true); return; }
+  mergeItems(items);
+  try { await idbPut(items); }
+  catch (e) { log('No se pudo guardar en el navegador: ' + e.message); toast('Importado, pero no se ha podido guardar para la próxima vez'); }
+  renderList();
+  toast(items.length + ' amiibos importados');
+}
+
+const CP437 = 'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+function decodeZipName(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch (e) { let s = ''; for (const b of u8) s += b < 128 ? String.fromCharCode(b) : CP437[b - 128]; return s; }
+}
+function loadJSZip() {
+  if (window.JSZip) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = res;
+    s.onerror = () => rej(new Error('no he podido cargar el descompresor (¿sin internet?)'));
+    document.head.appendChild(s);
+  });
+}
+function progress(frac) {
+  const bar = $('#bar');
+  bar.classList.add('show');
+  bar.firstElementChild.style.width = Math.round(frac * 100) + '%';
+  if (frac >= 1) setTimeout(() => { bar.classList.remove('show'); bar.firstElementChild.style.width = '0'; }, 500);
+}
+async function importZip(file) {
+  try {
+    await loadJSZip();
+    const zip = await window.JSZip.loadAsync(file, { decodeFileName: decodeZipName });
+    const entries = Object.values(zip.files).filter(f => !f.dir && /\.bin$/i.test(f.name) && !/(^|\/)__MACOSX\//.test(f.name));
+    const items = [];
+    for (let i = 0; i < entries.length; i++) {
+      const u8 = await entries[i].async('uint8array');
+      if (validBin(u8)) items.push(makeItem(entries[i].name, u8));
+      if (i % 25 === 0) progress(i / entries.length);
+    }
+    progress(1);
+    log('ZIP: ' + entries.length + ' .bin leídos, ' + items.length + ' válidos');
+    await addItems(items);
+  } catch (e) {
+    log('Error con el zip: ' + e.message);
+    toast('No he podido abrir el zip: ' + e.message, true);
+  }
+}
+async function importFiles(fileList) {
+  const files = Array.from(fileList).filter(f => /\.bin$/i.test(f.name));
+  const items = [];
+  for (let i = 0; i < files.length; i++) {
+    const u8 = new Uint8Array(await files[i].arrayBuffer());
+    if (validBin(u8)) items.push(makeItem(files[i].webkitRelativePath || files[i].name, u8));
+    if (i % 25 === 0) progress(i / Math.max(files.length, 1));
+  }
+  progress(1);
+  await addItems(items);
+}
+
+/* ---------- lista ---------- */
+function getRecent() { return store.get('al-recent', []); }
+function pushRecent(path) { store.set('al-recent', [path].concat(getRecent().filter(p => p !== path)).slice(0, 8)); }
+
+function itemRow(it, showGroup) {
+  const row = el('div', 'item');
+  if (it.id) {
+    const img = new Image();
+    img.loading = 'lazy';
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => { iconLoaded = true; };
+    img.onerror = () => { img.replaceWith(el('div', 'ph')); iconFail(); };
+    img.src = iconUrl(it.id);
+    row.append(img);
+  } else row.append(el('div', 'ph'));
+  const meta = el('div', 'meta');
+  meta.append(el('div', 'name', it.name));
+  const sub = showGroup ? [it.group, it.sub].filter(Boolean).join(' · ') : it.sub;
+  if (sub) meta.append(el('div', 'sub', sub));
+  row.append(meta);
+  const b = el('button', null, 'Cargar');
+  b.addEventListener('click', () => sendAmiibo(it, row));
+  row.append(b);
+  return row;
+}
+
+const openGroups = new Set(store.get('al-open', []));
+function renderList() {
+  const list = $('#list');
+  list.textContent = '';
+  const info = $('#libInfo');
+  if (!LIB.length) {
+    info.innerHTML = 'Aún no hay amiibos. En el PC, clic derecho en la carpeta <b>Amiibo Bin</b> → Comprimir en archivo ZIP, pásalo al iPhone (iCloud Drive, Telegram, correo…) y pulsa <b>Importar .zip</b>. Solo hay que hacerlo una vez: se queda guardado en este navegador.';
+    $('#q').hidden = true;
+    return;
+  }
+  $('#q').hidden = false;
+  info.textContent = LIB.length + ' amiibos guardados en este navegador.';
+  const q = $('#q').value.trim().toLowerCase();
+  if (q) {
+    const words = q.split(/\s+/);
+    const hits = LIB.filter(it => {
+      const hay = (it.name + ' ' + it.group + ' ' + it.sub).toLowerCase();
+      return words.every(w => hay.includes(w));
+    });
+    if (!hits.length) { list.append(el('div', 'empty', 'Nada con «' + q + '».')); return; }
+    hits.slice(0, 150).forEach(it => list.append(itemRow(it, true)));
+    if (hits.length > 150) list.append(el('div', 'empty', 'Y ' + (hits.length - 150) + ' más. Afina la búsqueda.'));
+    return;
+  }
+  const byPath = new Map(LIB.map(it => [it.path, it]));
+  const recent = getRecent().map(p => byPath.get(p)).filter(Boolean);
+  if (recent.length) {
+    list.append(el('div', 'sect', 'Recientes'));
+    recent.forEach(it => list.append(itemRow(it, true)));
+    list.append(el('div', 'sect', 'Todos'));
+  }
+  const groups = new Map();
+  LIB.forEach(it => { if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(it); });
+  groups.forEach((items, g) => {
+    const det = el('details', 'group');
+    const sum = el('summary');
+    sum.append(el('span', null, g), el('span', 'count', String(items.length)));
+    det.append(sum);
+    const fill = () => { if (det.childElementCount === 1) items.forEach(it => det.append(itemRow(it, false))); };
+    if (openGroups.has(g)) { det.open = true; fill(); }
+    det.addEventListener('toggle', () => {
+      if (det.open) { openGroups.add(g); fill(); } else openGroups.delete(g);
+      store.set('al-open', Array.from(openGroups));
+    });
+    list.append(det);
+  });
+}
+
+/* ---------- arranque ---------- */
+function init() {
+  if (!navigator.bluetooth) {
+    $('#noBt').hidden = false;
+    $('#btnConnect').disabled = true;
+    $('#btnAll').disabled = true;
+  }
+  if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && 'webkitdirectory' in document.createElement('input')) $('#btnDir').hidden = false;
+
+  $('#btnConnect').addEventListener('click', () => connect(false));
+  $('#btnAll').addEventListener('click', () => connect(true));
+  $('#btnDisconnect').addEventListener('click', disconnect);
+  document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => setMode(Number(b.dataset.mode))));
+
+  $('#btnZip').addEventListener('click', () => $('#inZip').click());
+  $('#btnFiles').addEventListener('click', () => $('#inFiles').click());
+  $('#btnDir').addEventListener('click', () => $('#inDir').click());
+  $('#inZip').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importZip(f); });
+  $('#inFiles').addEventListener('change', e => { const fl = Array.from(e.target.files); e.target.value = ''; importFiles(fl); });
+  $('#inDir').addEventListener('change', e => { const fl = Array.from(e.target.files); e.target.value = ''; importFiles(fl); });
+  $('#q').addEventListener('input', renderList);
+
+  $('#optAck').checked = S.ack;
+  $('#optDelay').value = S.delay;
+  $('#optSplit').checked = S.split;
+  $('#optAck').addEventListener('change', e => { S.ack = e.target.checked; saveSettings(); });
+  $('#optDelay').addEventListener('change', e => { S.delay = Math.max(0, Math.min(2000, Number(e.target.value) || 0)); e.target.value = S.delay; saveSettings(); });
+  $('#optSplit').addEventListener('change', e => { S.split = e.target.checked; saveSettings(); });
+  $('#btnCopyLog').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(logLines.join('\n')); toast('Registro copiado'); }
+    catch (e) { toast('No se ha podido copiar', true); }
+  });
+  let armed = false;
+  $('#btnClearLib').addEventListener('click', async () => {
+    if (!armed) { armed = true; $('#btnClearLib').textContent = 'Pulsa otra vez para borrar'; setTimeout(() => { armed = false; $('#btnClearLib').textContent = 'Borrar biblioteca'; }, 3000); return; }
+    armed = false;
+    $('#btnClearLib').textContent = 'Borrar biblioteca';
+    try { await idbClear(); } catch (e) {}
+    LIB = [];
+    store.set('al-recent', []);
+    renderList();
+    toast('Biblioteca borrada');
+  });
+
+  paintMode();
+  refreshConnUI();
+  idbAll()
+    .then(rows => { mergeItems(rows.map(r => makeItem(r.path, r.data instanceof Uint8Array ? r.data : new Uint8Array(r.data)))); renderList(); })
+    .catch(e => { log('Sin almacenamiento local: ' + e.message); renderList(); });
+}
+init();
+</script>
+</body>
+</html>
