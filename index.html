@@ -85,11 +85,11 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px 10px}
   <section class="card">
     <h2>Modo</h2>
     <div class="modes">
-      <button class="mode" data-mode="2"><b>Automático</b><span>Número de serie nuevo en cada escaneo</span></button>
-      <button class="mode" data-mode="0"><b>Manual</b><span>Número nuevo al pulsar el botón</span></button>
-      <button class="mode" data-mode="1"><b>Secuencial</b><span>Hasta 26 personajes con el mismo número</span></button>
+      <button class="mode" data-mode="4"><b>Automático</b><span>Número nuevo después de cada lectura</span></button>
+      <button class="mode" data-mode="1"><b>Manual</b><span>Número nuevo al pulsar el botón</span></button>
+      <button class="mode" data-mode="2"><b>Secuencial</b><span>Hasta 26 personajes con el mismo número</span></button>
     </div>
-    <p class="hint">Para saltarte el límite diario de Zelda usa <b>Automático</b>. El aparato no dice en qué modo está, así que aquí se marca el último que enviaste desde esta página.</p>
+    <p class="hint" id="modeHint">Al conectar se lee el modo real del aparato.</p>
   </section>
 
   <section class="card">
@@ -103,6 +103,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:6px 10px}
     <input type="file" id="inFiles" multiple hidden>
     <input type="file" id="inDir" webkitdirectory multiple hidden>
     <div class="bar" id="bar"><i></i></div>
+    <p class="hint" id="afterLoad" hidden style="color:var(--acc)"></p>
     <p class="hint" id="libInfo"></p>
     <p class="hint" id="iconHint" hidden style="color:var(--warn)">Las fotos no cargan aquí. Pasa si abres la página dentro de Claude (su vista previa bloquea las imágenes de internet y también el Bluetooth) o sin conexión. Ábrela en Chrome o Edge, o en Bluefy en el iPhone.</p>
     <input type="search" id="q" placeholder="Buscar amiibo…" autocomplete="off" autocorrect="off" spellcheck="false">
@@ -149,14 +150,44 @@ const SERVICES = [
 const NAME_PREFIXES = ['amiibolink', 'Amiibolink', 'AmiiboLink', 'AMIIBOLINK', 'amiibo link', 'Amiibo Link', 'Amiibo link'];
 const CMD = {
   hello: H('00001002335334AB1FE8C26DE535274B52E01F26'),
-  mode: {
-    0: H('00001003341F98E846198575E3D3E0425D418942'), // manual
-    1: H('000010032F25D80C4942C0D50B0BC6DFCA6021FC'), // secuencial
-    2: H('00001003E39651EC07E7E55437B6138E80C9B309')  // automático
+  mode: { // claves = número de modo del aparato (A1 B1 nn)
+    1: H('00001003341F98E846198575E3D3E0425D418942'), // manual: número nuevo al pulsar el botón
+    2: H('000010032F25D80C4942C0D50B0BC6DFCA6021FC'), // secuencial
+    4: H('00001003E39651EC07E7E55437B6138E80C9B309')  // automático: número nuevo tras cada lectura
   }
 };
 const RESP_DONE = '000010029C4D9FC65E4AA40A1DA07BCAD5661703';
-const MODE_NAMES = { 0: 'Manual', 1: 'Secuencial', 2: 'Automático' };
+const MODE_NAMES = { 1: 'Manual', 2: 'Secuencial', 3: 'NTAG fijo', 4: 'Automático' };
+const MODE_TIPS = {
+  1: 'Pulsa una vez el botón del AmiiboLink antes de cada escaneo: así estrena número de serie.',
+  2: 'En Secuencial todos comparten número de serie: para el límite diario de Zelda cambia a Automático o Manual.',
+  3: 'En este modo el número de serie es siempre el del archivo.',
+  4: 'El primer escaneo usa el número original del archivo. Si te dice que ya lo usaste hoy, vuelve a escanear sin recargar: desde ahí cada lectura va con número nuevo.'
+};
+
+/* Respuestas cifradas: AES-128-ECB, clave de pixl.js (ble_amiibolink.c) + key1/key2 de la trama */
+const AES_BASE = [0x4B, 0x47, 0x46, 0x5F, 0x41, 0x4D, 0x49, 0x4C, 0x07, 0xE7, 0x04, 0x06, 0x0A, 0x2A];
+async function decryptFrame(f) {
+  if (!(window.crypto && crypto.subtle) || !f || f.length < 20) return null;
+  const dl = f[2], pl = f[3];
+  if (!dl || dl % 16 || f.length < 4 + dl || pl > dl) return null;
+  const key = await crypto.subtle.importKey('raw', new Uint8Array(AES_BASE.concat([f[0], f[1]])), 'AES-CBC', false, ['encrypt', 'decrypt']);
+  const out = new Uint8Array(dl);
+  for (let i = 0; i < dl; i += 16) {
+    // ECB de un bloque con WebCrypto: CBC con IV cero + un bloque extra que descifra a relleno válido
+    const c = f.slice(4 + i, 20 + i);
+    const x = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-CBC', iv: c }, key, new Uint8Array(16).fill(16))).slice(0, 16);
+    const buf = new Uint8Array(32); buf.set(c); buf.set(x, 16);
+    out.set(new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, key, buf)).slice(0, 16), i);
+  }
+  return out.slice(0, pl);
+}
+function parseInfo(p) { // B2 A2 | len | versión | 01 | modo | ...
+  if (!p || p.length < 5 || p[0] !== 0xB2 || p[1] !== 0xA2) return null;
+  const n = p[2];
+  if (p.length < 5 + n) return null;
+  return { ver: String.fromCharCode(...p.slice(3, 3 + n)), mode: p[4 + n] };
+}
 
 function buildUpload(src) {
   const d = new Uint8Array(540);
@@ -220,7 +251,21 @@ function onNotify(e) {
   const v = e.target.value;
   const u8 = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
   log('RX ' + hex(u8));
+  decryptFrame(u8).then(p => { if (p) log('   = ' + hex(p)); }).catch(() => {});
   if (pending) { const p = pending; pending = null; p(u8); }
+}
+let devMode = store.get('al-devmode', null);
+async function readInfo() {
+  const r = await cmd(CMD.hello, 3000);
+  if (!r) return null;
+  let info = null;
+  try { info = parseInfo(await decryptFrame(r)); } catch (e) { log('No pude descifrar la info: ' + e.message); }
+  if (info) {
+    devMode = info.mode;
+    store.set('al-devmode', devMode);
+    paintMode();
+  }
+  return info;
 }
 
 async function rawWrite(b) {
@@ -292,15 +337,11 @@ async function connect(all) {
     await rxC.startNotifications();
     log('Conectado a ' + (device.name || 'dispositivo sin nombre') + ' (servicio ' + found.s.svc.slice(0, 8) + ')');
     refreshConnUI();
-    const r = await cmd(CMD.hello, 3000);
-    let info = device.name || 'AmiiboLink';
-    if (r && hex(r).startsWith('00002013')) {
-      const fw = r.slice(4);
-      const ascii = Array.from(fw).every(b => b >= 32 && b < 127) ? String.fromCharCode(...fw) : hex(fw);
-      info += ' · firmware ' + ascii;
-    }
-    $('#devInfo').textContent = info;
-    toast('Conectado');
+    const info = await readInfo();
+    let txt = device.name || 'AmiiboLink';
+    if (info) txt += ' · firmware ' + info.ver + ' · modo actual: ' + (MODE_NAMES[info.mode] || info.mode);
+    $('#devInfo').textContent = txt;
+    toast(info ? 'Conectado. Modo actual: ' + (MODE_NAMES[info.mode] || info.mode) : 'Conectado');
   } catch (e) {
     log('Error al conectar: ' + e.message);
     toast('No he podido conectar: ' + e.message, true);
@@ -329,19 +370,20 @@ async function guarded(label, fn) {
 }
 
 async function setMode(m) {
-  const ok = await guarded('Cambiando modo…', async () => {
+  const info = await guarded('Cambiando modo…', async () => {
     await cmd(CMD.mode[m]);
-    return true;
+    return (await readInfo()) || {};
   });
-  if (ok) {
-    store.set('al-mode', m);
-    paintMode();
-    toast('Modo ' + MODE_NAMES[m] + ' enviado');
-  }
+  if (!info) return;
+  if (info.mode === m) toast('El aparato confirma: modo ' + MODE_NAMES[m]);
+  else if (info.mode != null) toast('El aparato sigue en modo ' + (MODE_NAMES[info.mode] || info.mode), true);
+  else { devMode = m; store.set('al-devmode', m); paintMode(); toast('Modo ' + MODE_NAMES[m] + ' enviado (sin confirmación)'); }
+  const d = $('#devInfo').textContent.replace(/ · modo actual: .*$/, '');
+  if (devMode != null) $('#devInfo').textContent = d + ' · modo actual: ' + (MODE_NAMES[devMode] || devMode);
 }
 function paintMode() {
-  const m = store.get('al-mode', null);
-  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('sel', String(m) === b.dataset.mode));
+  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('sel', String(devMode) === b.dataset.mode));
+  $('#modeHint').textContent = MODE_TIPS[devMode] || 'Al conectar se lee el modo real del aparato.';
 }
 
 async function sendAmiibo(it, row) {
@@ -361,6 +403,9 @@ async function sendAmiibo(it, row) {
   setTimeout(() => { bar.classList.remove('show'); fill.style.width = '0'; }, 600);
   if (ok) {
     toast(it.name + ' cargado');
+    const tip = $('#afterLoad');
+    tip.textContent = it.name + ' cargado. ' + (MODE_TIPS[devMode] || '');
+    tip.hidden = false;
     pushRecent(it.path);
     document.querySelectorAll('.item.ok').forEach(x => x.classList.remove('ok'));
     if (row) row.classList.add('ok');
